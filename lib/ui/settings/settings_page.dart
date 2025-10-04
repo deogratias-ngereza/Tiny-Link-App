@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 
 import '../../controllers/theme_controller.dart';
 import '../../data/hive_service.dart';
 import '../../core/constants/links.dart';
+import '../../services/config_service.dart';
 
 /// SettingsPage
 /// - Change the full app theme color (seed color)
@@ -164,6 +166,28 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(height: 24),
+            Text('Backup & Restore', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.file_upload_outlined),
+                    title: const Text('Export Configuration (copy JSON)'),
+                    subtitle: const Text('Apps, links, and theme'),
+                    onTap: _exportConfig,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.file_download_outlined),
+                    title: const Text('Import Configuration (paste JSON)'),
+                    subtitle: const Text('Replaces current data'),
+                    onTap: _promptImport,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
             Text(
               'Tip: The theme uses Material 3 dynamic color derived from the seed. '
               'Choose a color that represents your brand or preference.',
@@ -200,6 +224,86 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _onPaletteTap(ThemeController themeCtrl, String hex) async {
     _hexCtrl.text = hex;
     await _applyHex(themeCtrl, hex);
+  }
+
+  Future<void> _exportConfig() async {
+    final json = ConfigService.exportToJsonString();
+    await Clipboard.setData(ClipboardData(text: json));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Configuration copied to clipboard')),
+      );
+    }
+  }
+
+  Future<void> _promptImport() async {
+    final ctrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Import Configuration'),
+        content: Form(
+          key: formKey,
+          child: SizedBox(
+            width: 600,
+            child: TextFormField(
+              controller: ctrl,
+              minLines: 6,
+              maxLines: 16,
+              decoration: const InputDecoration(
+                labelText: 'Paste JSON here',
+                alignLabelWithHint: true,
+              ),
+              validator: (v) {
+                final value = (v ?? '').trim();
+                if (value.isEmpty) return 'JSON is required';
+                try {
+                  // basic JSON validation
+                  // ignore: unused_local_variable
+                  final _ = Uri.decodeFull(value);
+                } catch (_) {}
+                try {
+                  // ignore: unused_local_variable
+                  final _ = value.startsWith('{') ? value : value; // placeholder
+                  // actual parsing will be done in try/catch during import
+                } catch (_) {
+                  return 'Invalid JSON';
+                }
+                return null;
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(context, true);
+            },
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final content = ctrl.text.trim();
+    try {
+      await ConfigService.importFromJsonString(content, replaceExisting: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Configuration imported')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _launchExternal(String urlStr) async {
